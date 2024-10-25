@@ -1156,7 +1156,7 @@ void LayerPlan::addWall(
             const coord_t line_width = p0.w_ + average_progress * delta_line_width;
             Point2LL destination = p0.p_ + normal(line_vector, piece_length * (piece + 1));
 
-            const Point2LL inset = -turn90CCW(normal(line_vector, line_width));
+            const Point2LL inset = -turn90CCW(normal(line_vector, line_width/2));
 
             double flow_modifier = (average_progress+(point_idx-1))/wall.size();
             flow_modifier = flow_modifier*10;
