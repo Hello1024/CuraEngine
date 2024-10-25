@@ -563,12 +563,14 @@ void LayerPlan::addPolygon(
     Point2LL p0 = polygon[start_idx];
     addTravel(p0, always_retract, config.z_offset);
     const int direction = backwards ? -1 : 1;
+
     for (size_t point_idx = 1; point_idx < polygon.size(); point_idx++)
     {
         Point2LL p1 = polygon[(start_idx + point_idx * direction + polygon.size()) % polygon.size()];
         addExtrusionMove(p1, config, SpaceFillType::Polygons, flow_ratio, width_ratio, spiralize);
         p0 = p1;
     }
+
     if (polygon.size() > 2)
     {
         addExtrusionMove(polygon[start_idx], config, SpaceFillType::Polygons, flow_ratio, width_ratio, spiralize);
@@ -998,6 +1000,7 @@ void LayerPlan::addWall(
     {
         // make sure wall start point is not above air!
         start_idx = locateFirstSupportedVertex(wall, start_idx);
+        if (wall_0_wipe_dist>0) start_idx = (start_idx + wall.size()/10+2)%wall.size(); 
     }
 
     double non_bridge_line_volume = max_non_bridge_line_volume; // assume extruder is fully pressurised before first non-bridge line is output
@@ -1103,7 +1106,8 @@ void LayerPlan::addWall(
     ExtrusionJunction p0 = wall[start_idx];
 
     const int direction = is_reversed ? -1 : 1;
-    const size_t max_index = is_closed ? wall.size() + 1 : wall.size();
+    const int laps=2; //(wall_0_wipe_dist>0)?2:1;
+    const size_t max_index = is_closed ? wall.size()*laps + 1 : wall.size();
     for (size_t point_idx = 1; point_idx < max_index; point_idx++)
     {
         const ExtrusionJunction& p1 = wall[(wall.size() + start_idx + point_idx * direction) % wall.size()];
@@ -1111,12 +1115,6 @@ void LayerPlan::addWall(
         if (! bridge_wall_mask_.empty())
         {
             computeDistanceToBridgeStart((wall.size() + start_idx + point_idx * direction - 1) % wall.size());
-        }
-
-        if (first_line)
-        {
-            addTravel(p0.p_, always_retract);
-            first_line = false;
         }
 
         /*
@@ -1134,6 +1132,8 @@ void LayerPlan::addWall(
         const coord_t delta_line_width = p1.w_ - p0.w_;
         const Point2LL line_vector = p1.p_ - p0.p_;
         const coord_t line_length = vSize(line_vector);
+
+        if (line_length==0) continue;
         /*
         Calculate how much the line would deviate from the trapezoidal shape if printed at average width.
         This formula is:
@@ -1150,9 +1150,35 @@ void LayerPlan::addWall(
 
         for (size_t piece = 0; piece < pieces; ++piece)
         {
+            // Round the line_width value to overcome floating point rounding issues, otherwise we may end up with slightly different values
+            // and the generated GCodePath objects will not be merged together, which some subsequent algorithms rely on (e.g. coasting)
             const double average_progress = (double(piece) + 0.5) / pieces; // How far along this line to sample the line width in the middle of this piece.
             const coord_t line_width = p0.w_ + average_progress * delta_line_width;
-            const Point2LL destination = p0.p_ + normal(line_vector, piece_length * (piece + 1));
+            Point2LL destination = p0.p_ + normal(line_vector, piece_length * (piece + 1));
+
+            const Point2LL inset = -turn90CCW(normal(line_vector, line_width));
+
+            double flow_modifier = (average_progress+(point_idx-1))/wall.size();
+            flow_modifier = flow_modifier*10;
+            if (flow_modifier>11) {
+                return;
+            }
+            if (flow_modifier>10) flow_modifier = 11-flow_modifier;
+            if (!is_closed) flow_modifier=1;
+
+            flow_modifier = std::clamp(flow_modifier, 0.0, 1.0);
+
+            //if (flow_modifier>1) flow_modifier=2-flow_modifier;
+            //if (!(wall_0_wipe_dist>0)) flow_modifier=1.0;
+
+            destination += inset*(1-flow_modifier);
+
+            if (first_line)
+            {
+                addTravel_simple(p0.p_+inset*(1-flow_modifier)); //, always_retract);
+                first_line = false;
+            }
+
             if (is_small_feature)
             {
                 constexpr bool spiralize = false;
@@ -1160,7 +1186,7 @@ void LayerPlan::addWall(
                     destination,
                     default_config,
                     SpaceFillType::Polygons,
-                    flow_ratio,
+                    flow_ratio*flow_modifier,
                     line_width * nominal_line_width_multiplier,
                     spiralize,
                     small_feature_speed_factor);
@@ -1175,7 +1201,7 @@ void LayerPlan::addWall(
                     default_config,
                     roofing_config,
                     bridge_config,
-                    flow_ratio,
+                    flow_ratio*flow_modifier,
                     line_width * nominal_line_width_multiplier,
                     non_bridge_line_volume,
                     speed_factor,
@@ -1186,6 +1212,7 @@ void LayerPlan::addWall(
         p0 = p1;
     }
 
+return;
     if (wall.size() >= 2)
     {
         if (! bridge_wall_mask_.empty())
@@ -1195,6 +1222,7 @@ void LayerPlan::addWall(
 
         if (wall_0_wipe_dist > 0 && ! is_linked_path)
         { // apply outer wall wipe
+            return;
             p0 = wall[start_idx];
             int distance_traversed = 0;
             for (unsigned int point_idx = 1;; point_idx++)
