@@ -1110,11 +1110,11 @@ void LayerPlan::addWall(
     const size_t max_index = is_closed ? wall.size()*laps + 1 : wall.size();
     for (size_t point_idx = 1; point_idx < max_index; point_idx++)
     {
-        const ExtrusionJunction& p1 = wall[(wall.size() + start_idx + point_idx * direction) % wall.size()];
+        const ExtrusionJunction& p1 = wall[(wall.size()*2 + start_idx + point_idx * direction) % wall.size()];
 
         if (! bridge_wall_mask_.empty())
         {
-            computeDistanceToBridgeStart((wall.size() + start_idx + point_idx * direction - 1) % wall.size());
+            computeDistanceToBridgeStart((wall.size()*2 + start_idx + point_idx * direction - 1) % wall.size());
         }
 
         /*
@@ -1156,7 +1156,7 @@ void LayerPlan::addWall(
             const coord_t line_width = p0.w_ + average_progress * delta_line_width;
             Point2LL destination = p0.p_ + normal(line_vector, piece_length * (piece + 1));
 
-            const Point2LL inset = -turn90CCW(normal(line_vector, line_width/2.001));
+            const Point2LL inset = -turn90CCW(normal(line_vector, line_width/3))*direction;
 
             double flow_modifier = (average_progress+(point_idx-1))/wall.size();
             flow_modifier = flow_modifier*10;
@@ -1175,7 +1175,12 @@ void LayerPlan::addWall(
 
             if (first_line)
             {
-                addTravel_simple(p0.p_+inset*(1-flow_modifier)); //, always_retract);
+                if (wall_0_wipe_dist>0)
+                    // outer
+                  addTravel_simple(p0.p_+inset*(1-flow_modifier)); //, always_retract);
+                else
+                    // inner
+                  addTravel(p0.p_+inset*(1-flow_modifier), always_retract);
                 first_line = false;
             }
 
